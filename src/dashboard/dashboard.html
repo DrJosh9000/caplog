@@ -1,0 +1,320 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<html>
+	<head>
+		<title>
+			dashboard
+		</title>
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js" type="text/javascript"></script>
+		<script src="https://www.google.com/jsapi?autoload={'modules':[{'name':'visualization','version':'1','packages':['corechart']}]}" type="text/javascript"></script>
+		<script type="text/javascript">
+var magnitudes = {
+	15: 'P',
+	12: 'T',
+	9: 'G',
+	6: 'M',
+	3: 'K',
+	0: '',
+	'-3': 'm',
+	'-6': 'µ',
+	'-9': 'n',
+	'-12': 'p',
+}
+
+function magnitude(n) {
+	if (n == 0) {
+		return '0';
+	}
+	if (n < 0) {
+		return magnitude(-n);
+	}
+	m = 0;
+	while (n > 999 && m < 15) {
+		n /= 1e3;
+		m += 3;
+	}
+	while (n < 1 && m > -12) {
+		n *= 1e3;
+		m -= 3;
+	}
+	return n.toFixed(1) + magnitudes[m];
+}
+
+refreshInterval = 5000;
+var historyTable, historyLineChart;
+var v4v6PacketsDonut, v4v6BytesDonut;
+var last = {
+	t: new Date(),
+	v: {{.}}, // Here, Go html/template magically expands dot into JSON format.
+}; 
+
+function refresh() {
+	$.getJSON('/dashboard/json', function(data) {
+		$('#packets_total').html(magnitude(data.Total.Packets));
+		$('#bytes_total').html(magnitude(data.Total.Bytes));
+		
+		$('#packets_up').html(magnitude(data.Up.Packets));
+		$('#packets_down').html(magnitude(data.Down.Packets));
+		$('#packets_int').html(magnitude(data.Internal.Packets));
+		$('#packets_ext').html(magnitude(data.External.Packets));
+		
+		$('#bytes_up').html(magnitude(data.Up.Bytes));
+		$('#bytes_down').html(magnitude(data.Down.Bytes));
+		$('#bytes_int').html(magnitude(data.Internal.Bytes));
+		$('#bytes_ext').html(magnitude(data.External.Bytes));
+
+		// Compute the next data point.
+		now = new Date()
+		dt = (now - last.t) / 1e3; // in millis.
+		if (dt > 0.1) {
+			packetsTotalPerSec = (data.Total.Packets - last.v.Total.Packets) / dt;
+			bytesTotalPerSec = (data.Total.Bytes - last.v.Total.Bytes) / dt;
+
+			packetsUpPerSec = (data.Up.Packets - last.v.Up.Packets) / dt;
+			packetsDownPerSec = (data.Down.Packets - last.v.Down.Packets) / dt;
+			packetsIntPerSec = (data.Internal.Packets - last.v.Internal.Packets) / dt;
+			packetsExtPerSec = (data.External.Packets - last.v.External.Packets) / dt;
+
+			bytesUpPerSec = (data.Up.Bytes - last.v.Up.Bytes) / dt;
+			bytesDownPerSec = (data.Down.Bytes - last.v.Down.Bytes) / dt;
+			bytesIntPerSec = (data.Internal.Bytes - last.v.Internal.Bytes) / dt;
+			bytesExtPerSec = (data.External.Bytes - last.v.External.Bytes) / dt;
+
+			// Update table.
+			$('#packets_total_persec').html(magnitude(packetsTotalPerSec));
+			$('#bytes_total_persec').html(magnitude(bytesTotalPerSec));
+
+			$('#packets_up_persec').html(magnitude(packetsUpPerSec));
+			$('#packets_down_persec').html(magnitude(packetsDownPerSec));
+			$('#packets_int_persec').html(magnitude(packetsIntPerSec));
+			$('#packets_ext_persec').html(magnitude(packetsExtPerSec));
+
+			$('#bytes_up_persec').html(magnitude(bytesUpPerSec));
+			$('#bytes_down_persec').html(magnitude(bytesDownPerSec));
+			$('#bytes_int_persec').html(magnitude(bytesIntPerSec));
+			$('#bytes_ext_persec').html(magnitude(bytesExtPerSec));
+
+			// Add to line chart.
+			historyTable.addRow([now, // (now - dt/2) would be slightly more accurate.
+				{v: packetsUpPerSec, f: magnitude(packetsUpPerSec)},
+				{v: packetsDownPerSec, f: magnitude(packetsDownPerSec)},
+				{v: packetsIntPerSec, f: magnitude(packetsIntPerSec)},
+				{v: bytesUpPerSec, f: magnitude(bytesUpPerSec)},
+				{v: bytesDownPerSec, f: magnitude(bytesDownPerSec)},
+				{v: bytesIntPerSec, f: magnitude(bytesIntPerSec)},
+			]);
+			last = {
+				t: now,
+				v: data, 
+			};
+			n = historyTable.getNumberOfRows();
+			if (n > 100) {
+				historyTable.removeRows(0, n - 100);
+			}
+			historyLineChart.draw(historyTable, {
+				chart: {
+					title: 'Packets, bytes'
+				},
+				width: 900,
+				height: 500,
+				vAxis: {
+					logScale: true,
+				}
+			});
+			
+			// Draw donut charts.
+			v4v6PacketsDonut.draw(google.visualization.arrayToDataTable([
+				['Protocol', 'Packets'],
+				['IPv4', {v: data.V4.Packets, f: magnitude(data.V4.Packets)}],
+				['IPv6', {v: data.V6.Packets, f: magnitude(data.V6.Packets)}],
+			]), {
+				title: 'Packets by protocol',
+				pieHole: 0.4,
+			});
+			v4v6BytesDonut.draw(google.visualization.arrayToDataTable([
+				['Protocol', 'Bytes'],
+				['IPv4', {v: data.V4.Bytes, f: magnitude(data.V4.Bytes)}],
+				['IPv6', {v: data.V6.Bytes, f: magnitude(data.V6.Bytes)}],
+			]), {
+				title: 'Bytes by protocol',
+				pieHole: 0.4,
+			});
+		}
+		setTimeout(refresh, refreshInterval);
+	});
+}
+
+google.setOnLoadCallback(function() {
+	historyTable = new google.visualization.DataTable();
+	historyTable.addColumn('datetime', 'Time');
+	historyTable.addColumn('number', 'Packets/sec up');
+	historyTable.addColumn('number', 'Packets/sec down');
+	historyTable.addColumn('number', 'Packets/sec int.');
+	historyTable.addColumn('number', 'Bytes/sec up');
+	historyTable.addColumn('number', 'Bytes/sec down');
+	historyTable.addColumn('number', 'Bytes/sec int.');
+
+	historyLineChart = new google.visualization.LineChart($('#packets_chart')[0]);
+	
+	v4v6PacketsDonut = new google.visualization.PieChart($('#protocol_packets_donut')[0]);
+	v4v6BytesDonut = new google.visualization.PieChart($('#protocol_bytes_donut')[0]);
+	refresh();
+});
+		</script>
+		<style type="text/css">
+		body {
+			font-family:'Helvetica', 'Arial', 'sans-serif';
+		}
+		td.numeric {
+			text-align: right;
+		}
+		#container {
+			width: 900px;
+		    margin-left: auto;
+		    margin-right: auto;
+		}
+		.shinytable {
+			border-collapse: collapse;
+			border-spacing: 0;
+			border: none;
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+		}
+		.shinytable tr:nth-child(odd) {
+			background-color: #eaf7ff;
+			color: #000000;
+		}
+		.shinytable tr:nth-child(even) {
+			background-color: #ffffff;
+			color: #000000;
+		}
+		.shinytable tr:first-child {
+			background-color: #00508e;
+			color: #ffffff;
+		}
+		.shinytable td {
+			vertical-align: middle;
+			text-align: right;
+			padding: 8px;
+		} 
+		.shinytable th {
+			vertical-align: middle;
+			text-align: right;
+			padding: 8px;
+		}
+		</style>
+	</head>
+	<body>
+		<div id='container'>
+		<p>
+			<span id='error_msg' style='color:red; display:none'>An error occurred!</span>
+		</p>
+		<table class='shinytable'>
+			<tr>
+				<th></th>
+				<th>
+					Packets
+				</th>
+				<th>
+					Bytes
+				</th>
+				<th>
+					Packets/sec
+				</th>
+				<th>
+					Bytes/sec
+				</th>
+			</tr>
+			<tr>
+				<th>
+					Total
+				</th>
+				<td id='packets_total' class='numeric'>
+					{{.Total.Packets}}
+				</td>
+				<td id='bytes_total' class='numeric'>
+					{{.Total.Bytes}}
+				</td>
+				<td id='packets_total_persec' class='numeric'>
+					0
+				</td>
+				<td id='bytes_total_persec' class='numeric'>
+					0
+				</td>
+			</tr>
+			<tr>
+				<th>
+					Up
+				</th>
+				<td id='packets_up' class='numeric'>
+					{{.Up.Packets}}
+				</td>
+				<td id='bytes_up' class='numeric'>
+					{{.Up.Bytes}}
+				</td>
+				<td id='packets_up_persec' class='numeric'>
+					0
+				</td>
+				<td id='bytes_up_persec' class='numeric'>
+					0
+				</td>
+			</tr>
+			<tr>
+				<th>
+					Down
+				</th>
+				<td id='packets_down' class='numeric'>
+					{{.Down.Packets}}
+				</td>
+				<td id='bytes_down' class='numeric'>
+					{{.Down.Bytes}}
+				</td>
+				<td id='packets_down_persec' class='numeric'>
+					0
+				</td>
+				<td id='bytes_down_persec' class='numeric'>
+					0
+				</td>
+			</tr>
+			<tr>
+				<th>
+					Internal
+				</th>
+				<td id='packets_int' class='numeric'>
+					{{.Internal.Packets}}
+				</td>
+				<td id='bytes_int' class='numeric'>
+					{{.Internal.Bytes}}
+				</td>
+				<td id='packets_int_persec' class='numeric'>
+					0
+				</td>
+				<td id='bytes_int_persec' class='numeric'>
+					0
+				</td>
+			</tr>
+			<tr>
+				<th>
+					External
+				</th>
+				<td id='packets_ext' class='numeric'>
+					{{.External.Packets}}
+				</td>
+				<td id='bytes_ext' class='numeric'>
+					{{.External.Bytes}}
+				</td>
+				<td id='packets_ext_persec' class='numeric'>
+					0
+				</td>
+				<td id='bytes_ext_persec' class='numeric'>
+					0
+				</td>
+			</tr>
+		</table>
+		<div id="packets_chart" style="width: 100%; height: 500px"></div>
+		<div id="protocol_packets_donut" style="width: 50%; height: 330px; float:left;"></div>
+		<div id="protocol_bytes_donut" style="width: 50%; height: 330px; float:right;"></div>
+	</div>
+	</body>
+</html>

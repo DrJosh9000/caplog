@@ -1,0 +1,34 @@
+<table class='shinytable'>
+	<tr>
+		<th>
+			Src
+		</th>
+		<th>
+			Dst
+		</th>
+		<th>
+			Packets
+		</th>
+		<th>
+			Bytes
+		</th>
+	</tr>
+	{{range $src, $dstMap := .}}
+	{{range $dst, $agg := $dstMap}}
+	<tr>
+		<th>
+			{{ $src }}
+		</th>
+		<th>
+			{{ $dst }}
+		</th>
+		<td class='numeric'>
+			{{ $agg.Packets }}
+		</td>
+		<td class='numeric'>
+			{{ $agg.Bytes }}
+		</td>
+	</tr>
+	{{end}}
+	{{end}}
+</table>
