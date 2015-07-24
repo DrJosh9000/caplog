@@ -23,5 +23,11 @@ _testmain.go
 *.test
 *.prof
 
+# Other stuff
 .DS_Store
+pkg/
+bin/
 
+# You can "go get" things in here:
+src/github.com/
+src/golang.org/
