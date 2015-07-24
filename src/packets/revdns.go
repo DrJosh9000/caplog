@@ -17,6 +17,9 @@ package packets
 // This file implements a concurrent-safe reverse DNS map.
 
 import (
+	"fmt"
+	"net"
+	"strings"
 	"sync"
 
 	"github.com/google/gopacket"
@@ -39,6 +42,8 @@ func newReverseDNSMap() *reverseDNSMap {
 // name returns either the name that mapped to the given endpoint most recently,
 // or the formatted endpoint if not found.
 func (r *reverseDNSMap) name(e gopacket.Endpoint) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if n, ok := r.rm[e]; ok {
 		return n
 	}
@@ -48,19 +53,33 @@ func (r *reverseDNSMap) name(e gopacket.Endpoint) string {
 // names maps the names for both endpoints of a flow.
 func (r *reverseDNSMap) names(netFlow gopacket.Flow) (string, string) {
 	src, dst := netFlow.Endpoints()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	return r.name(src), r.name(dst)
 }
 
 // add reads the DNS answers and adds them to the mapping.
 func (r *reverseDNSMap) add(dns *layers.DNS) {
-	r.mu.Lock()
+	// Extract A, quad A, and CNAME records into useful maps.
+	cnames := make(map[string]string)
+	ips := make(map[gopacket.Endpoint]string)
 	for _, a := range dns.Answers {
-		// TODO: Handle CNAMEs in some fashion.
-		if a.Class == layers.DNSClassIN && (a.Type == layers.DNSTypeA || a.Type == layers.DNSTypeAAAA) {
-			r.rm[layers.NewIPEndpoint(a.IP)] = string(a.Name)
+		if a.Class != layers.DNSClassIN {
+			continue
 		}
+		switch a.Type {
+		case layers.DNSTypeA, layers.DNSTypeAAAA:
+			ips[layers.NewIPEndpoint(a.IP)] = string(a.Name)
+		case layers.DNSTypeCNAME:
+			cnames[string(a.CNAME)] = string(a.Name)
+		}
+	}
+	// Create a topologically-sorted chain of CNAMEs resolving to each IP.
+	r.mu.Lock()
+	for ip, n := range ips {
+		var names []string
+		for ok := true; ok; n, ok = cnames[n] {
+			names = append(names, n)
+		}
+		r.rm[ip] = strings.Join(names, ",")
 	}
 	r.mu.Unlock()
 }
@@ -70,4 +89,58 @@ func (r *reverseDNSMap) len() int {
 	return len(r.rm)
 }
 
+func (r *reverseDNSMap) String() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return fmt.Sprintf("%v", r.rm)
+}
+
+// multiReverseDNS is a concurrent-safe reverse DNS mapping per host,
+// so that knoweldge obtained about the DNS queries by host A doesn't
+// interfere with knowledge obtained about host B.
+type multiReverseDNS struct {
+	maps map[gopacket.Endpoint]*reverseDNSMap
+	mu   sync.RWMutex
+}
+
 // TODO: implement load/save.
+
+func newMultiReverseDNSMap() *multiReverseDNS {
+	return &multiReverseDNS{
+		maps: make(map[gopacket.Endpoint]*reverseDNSMap),
+	}
+}
+
+func (m *multiReverseDNS) hostMap(src gopacket.Endpoint) (rm *reverseDNSMap) {
+	m.mu.RLock()
+	rm = m.maps[src]
+	m.mu.RUnlock()
+	if rm != nil {
+		return
+	}
+	rm = newReverseDNSMap()
+	m.mu.Lock()
+	m.maps[src] = rm
+	m.mu.Unlock()
+	return
+}
+
+func (m *multiReverseDNS) add(src net.IP, dns *layers.DNS) {
+	m.hostMap(layers.NewIPEndpoint(src)).add(dns)
+}
+
+func (m *multiReverseDNS) names(src net.IP, flow gopacket.Flow) (string, string) {
+	rm := m.hostMap(layers.NewIPEndpoint(src))
+	return rm.names(flow)
+}
+
+// len returns the number of addresses in the map.
+func (m *multiReverseDNS) len() int {
+	return len(m.maps)
+}
+
+func (m *multiReverseDNS) String() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return fmt.Sprintf("%v", m.maps)
+}

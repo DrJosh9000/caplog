@@ -51,7 +51,7 @@ type Capture struct {
 	BufferSize int
 	Log        func([]Metadata)
 
-	revDNS     *reverseDNSMap
+	revDNS     *multiReverseDNS
 	bufferRing chan []Metadata
 }
 
@@ -77,7 +77,7 @@ func (c *Capture) logBuffer(b []Metadata) {
 }
 
 // processor is a worker that decodes packets and passes on to Account and Log.
-func (c *Capture) processor(num int, packetsCh chan gopacket.Packet) {
+func (c *Capture) processor(num int, packetsCh <-chan gopacket.Packet) {
 	log.Printf("processor %d: starting", num)
 
 	buffer := c.nextBuffer()
@@ -112,17 +112,20 @@ func (c *Capture) processor(num int, packetsCh chan gopacket.Packet) {
 			switch layerType {
 			case layers.LayerTypeIPv6:
 				b.SrcIP, b.DstIP = ip6.SrcIP, ip6.DstIP
-				b.SrcName, b.DstName = c.revDNS.names(ip6.NetworkFlow())
+				b.SrcName, b.DstName = c.revDNS.names(local(b.SrcIP, b.DstIP), ip6.NetworkFlow())
 				b.V6 = true
 			case layers.LayerTypeIPv4:
 				b.SrcIP, b.DstIP = ip4.SrcIP, ip4.DstIP
-				b.SrcName, b.DstName = c.revDNS.names(ip4.NetworkFlow())
+				b.SrcName, b.DstName = c.revDNS.names(local(b.SrcIP, b.DstIP), ip4.NetworkFlow())
 			case layers.LayerTypeTCP:
 				b.SrcPort, b.DstPort = uint16(tcp.SrcPort), uint16(tcp.DstPort)
 			case layers.LayerTypeUDP:
 				b.SrcPort, b.DstPort = uint16(udp.SrcPort), uint16(udp.DstPort)
 			case layers.LayerTypeDNS:
-				c.revDNS.add(&dns)
+				// Add DNS answers to reverse DNS map.
+				// The "src" is the host who did the query, but answers are replies, so "src" = dst.
+				// Should be here only after b.DstIP is set.
+				c.revDNS.add(b.DstIP, &dns)
 			}
 		}
 
@@ -151,10 +154,9 @@ func (c *Capture) Live() error {
 		return err
 	}
 
-	if c.revDNS == nil {
-		c.revDNS = newReverseDNSMap()
-		vars.Register("reverse-dns-map-size", vars.IntEval(c.revDNS.len).String)
-	}
+	c.revDNS = newMultiReverseDNSMap()
+	vars.Register("reverse-dns-map-size", vars.IntEval(c.revDNS.len).String)
+	vars.Register("reverse-dns-map", c.revDNS.String)
 
 	packetsCh := make(chan gopacket.Packet, c.BufferSize)
 	packetsChLen := func() int { return len(packetsCh) }

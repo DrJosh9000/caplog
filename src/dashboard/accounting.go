@@ -14,12 +14,11 @@
 
 package dashboard
 
-// This file safely aggregates packet counts and sizes.
+// This file aggregates packet counts and sizes.
 
 import (
 	"encoding/json"
 	"log"
-	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -38,27 +37,7 @@ var (
 		SrcDstIP:   make(map[string]map[string]Aggregation),
 		SrcDstName: make(map[string]map[string]Aggregation),
 	}
-
-	LocalNetblock *net.IPNet
-	stdLocalNets  = []*net.IPNet{
-		mustParseCIDR("10.0.0.0/8"), // RFC1918 IPv4 private addresses
-		mustParseCIDR("172.16.0.0/12"),
-		mustParseCIDR("192.168.0.0/16"),
-		mustParseCIDR("fd00::/8"),           // RFC4193 IPv6 private addresses
-		mustParseCIDR("169.254.0.0/16"),     // RFC3917 IPv4 link-local addresses
-		mustParseCIDR("fe80::/10"),          // RFC4862 IPv6 link-local/autoconfig addresses
-		mustParseCIDR("0.0.0.0/32"),         // Broadcast source
-		mustParseCIDR("255.255.255.255/32"), // Broadcast destination
-	}
 )
-
-func mustParseCIDR(s string) *net.IPNet {
-	_, cidr, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-	return cidr
-}
 
 // Aggregation combines the two counters for each total or flow.
 type Aggregation struct {
@@ -86,27 +65,12 @@ type MapValues struct {
 	SrcDstIP, SrcDstName map[string]map[string]Aggregation
 }
 
-// isLocal returns true if the IP is a private or link-local address. It also
-// considers the LocalNetblock passed in (from a flag), useful in case NAT is
-// not in use.
-func isLocal(ip net.IP) bool {
-	if LocalNetblock != nil && LocalNetblock.Contains(ip) {
-		return true
-	}
-	for _, cidr := range stdLocalNets {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // AddPacket lets vals account for the packet.
 func AddPacket(m *packets.Metadata) {
 	vals.Total.Add(m.Size)
 
 	// Classify packet flow for subtotals.
-	srcPrivate, dstPrivate := isLocal(m.SrcIP), isLocal(m.DstIP)
+	srcPrivate, dstPrivate := packets.IsLocal(m.SrcIP), packets.IsLocal(m.DstIP)
 	switch {
 	case srcPrivate && dstPrivate:
 		vals.Internal.Add(m.Size)
@@ -128,34 +92,6 @@ func AddPacket(m *packets.Metadata) {
 			vals.V4.Add(m.Size)
 		}
 	}
-	/*
-		// Per-IP accounting.
-		src, dst := m.SrcIP.String(), m.DstIP.String()
-		mapVars.UpByIP[src] = mapVars.UpByIP[src].Add(m.Size)
-		mapVars.DownByIP[dst] = mapVars.DownByIP[dst].Add(m.Size)
-
-		// Per-Name accounting.
-		mapVars.UpByName[m.SrcName] = mapVars.UpByName[m.SrcName].Add(m.Size)
-		mapVars.DownByName[m.DstName] = mapVars.DownByName[m.DstName].Add(m.Size)
-
-		// Src-Dst by IP accounting.
-		if dstMap, ok := mapVars.SrcDstIP[src]; ok {
-			dstMap[dst] = dstMap[dst].Add(m.Size)
-		} else {
-			mapVars.SrcDstIP[src] = map[string]Aggregation{
-				dst: {Bytes: m.Size, Packets: 1},
-			}
-		}
-
-		// Src-Dst by name accounting.
-		if dstMap, ok := mapVars.SrcDstName[m.SrcName]; ok {
-			dstMap[m.DstName] = dstMap[m.DstName].Add(m.Size)
-		} else {
-			mapVars.SrcDstName[m.SrcName] = map[string]Aggregation{
-				m.DstName: {Bytes: m.Size, Packets: 1},
-			}
-		}
-	*/
 }
 
 // State returns the current state of the vals.

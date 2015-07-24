@@ -24,7 +24,7 @@ import (
 
 const (
 	// TODO: Have a templates dir installed somewhere sensible.
-	dashTemplateBase    = "/home/josh/caplog/src/dashboard/"
+	dashTemplateBase    = "src/dashboard/"
 	dashTemplateFile    = dashTemplateBase + "dashboard.html"
 	ipTableTemplateFile = dashTemplateBase + "srcdsttable.html"
 )

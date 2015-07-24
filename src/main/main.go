@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"runtime"
+	"time"
 
 	"dashboard"
 	"packets"
@@ -42,6 +44,8 @@ var (
 
 	localNetblock = flag.String("localnet", "", "Additional netblock of routable addresses to consider local (fd::/8, 10/8, 192.168/16, etc are all automatically local).")
 )
+
+const influxRetryLimit = 5
 
 type influxEndpoint string
 
@@ -60,28 +64,35 @@ func (e influxEndpoint) writePackets(data []packets.Metadata) {
 		return
 	}
 	log.Printf("Writing %d points to Influx...", len(data))
-	pr, pw := io.Pipe()
-	go func() {
-		pw.Write([]byte(`[{"name":"packet","columns":["time","src_ip","dst_ip","src_port","dst_port","src_name","dst_name","size"], "points" : [`))
-		first := true
-		for _, p := range data {
-			if first {
-				first = false
-			} else {
-				pw.Write([]byte(","))
+	// Retry loop with fuzzed exponential backoff.
+	waitBase := 100 * time.Millisecond
+	for i := 0; i < influxRetryLimit; i++ {
+		pr, pw := io.Pipe()
+		go func() {
+			pw.Write([]byte(`[{"name":"packet","columns":["time","src_ip","dst_ip","src_port","dst_port","src_name","dst_name","size"], "points" : [`))
+			first := true
+			for _, p := range data {
+				if first {
+					first = false
+				} else {
+					pw.Write([]byte(","))
+				}
+				jsonArray(pw, &p)
 			}
-			jsonArray(pw, &p)
+			pw.Write([]byte(`]}]`))
+			pw.Close()
+		}()
+		//log.Printf("Writing %q\n", b.String())
+		resp, err := http.Post(string(e), "application/json", pr)
+		if err != nil {
+			log.Println(err)
+			<-time.After(waitBase + time.Duration(rand.Int63n(int64(waitBase))))
+			waitBase *= 2
+			continue
 		}
-		pw.Write([]byte(`]}]`))
-		pw.Close()
-	}()
-	//log.Printf("Writing %q\n", b.String())
-	resp, err := http.Post(string(e), "application/json", pr)
-	if err != nil {
-		log.Println(err)
+		log.Println(resp.Status)
 		return
 	}
-	log.Println(resp.Status)
 }
 
 func main() {
@@ -96,7 +107,7 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "-localnet must be a valid netblock: %v\n", err)
 		}
-		dashboard.LocalNetblock = cidr
+		packets.LocalNetblock = cidr
 	}
 
 	// Serve HTTP UI.
@@ -120,7 +131,7 @@ func main() {
 			panic(err)
 		}
 		epURL.Path = "db/caplog/series"
-		// TODO: Put the InfluxDB user/password somewhere better.
+		// TODO: make username/pw configurable.
 		epURL.RawQuery = url.Values{
 			"u": []string{"caplog"},
 			"p": []string{"freshbeans"},
