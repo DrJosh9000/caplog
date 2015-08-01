@@ -36,7 +36,32 @@ func TestSingleReverseDNSMap(t *testing.T) {
 	}
 	r.add(d)
 	if got, want := "golang.org", r.name(layers.NewIPEndpoint(ip)); got != want {
-		t.Errorf("name: got %q, want %q", got, want)
+		t.Errorf("name(%v): got %q, want %q", ip, got, want)
+	}
+	if got, want := "1.2.3.4", r.name(layers.NewIPEndpoint(net.ParseIP("1.2.3.4"))); got != want {
+		t.Errorf("name(1.2.3.4): got %q, want %q", got, want)
+	}
+}
+
+func TestSingleReverseDNSMapIPv6(t *testing.T) {
+	r := newReverseDNSMap()
+	ip := net.ParseIP("2607:f8b0:400e:c05::8d")
+	d := &layers.DNS{
+		Answers: []layers.DNSResourceRecord{
+			{
+				Name:  []byte("golang.org"),
+				Type:  layers.DNSTypeAAAA,
+				Class: layers.DNSClassIN,
+				IP:    ip,
+			},
+		},
+	}
+	r.add(d)
+	if got, want := "golang.org", r.name(layers.NewIPEndpoint(ip)); got != want {
+		t.Errorf("name(%v): got %q, want %q", ip, got, want)
+	}
+	if got, want := "123:456:789::abcd", r.name(layers.NewIPEndpoint(net.ParseIP("123:456:789::abcd"))); got != want {
+		t.Errorf("name(123:456:789::abcd): got %q, want %q", got, want)
 	}
 }
 
