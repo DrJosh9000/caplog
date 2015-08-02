@@ -65,6 +65,31 @@ func TestSingleReverseDNSMapIPv6(t *testing.T) {
 	}
 }
 
+func TestReverseDNSMapCNAMEChain(t *testing.T) {
+	r := newReverseDNSMap()
+	ip := net.ParseIP("216.58.216.14")
+	d := &layers.DNS{
+		Answers: []layers.DNSResourceRecord{
+			{
+				Name:  []byte("dl.l.google.com"),
+				Type:  layers.DNSTypeA,
+				Class: layers.DNSClassIN,
+				IP:    ip,
+			},
+			{
+				Name:  []byte("dl.google.com"),
+				Type:  layers.DNSTypeCNAME,
+				Class: layers.DNSClassIN,
+				CNAME: []byte("dl.l.google.com"),
+			},
+		},
+	}
+	r.add(d)
+	if got, want := "dl.l.google.com,dl.google.com", r.name(layers.NewIPEndpoint(ip)); got != want {
+		t.Errorf("name(%v): got %q, want %q", ip, got, want)
+	}
+}
+
 func TestMultiReverseDNSMap(t *testing.T) {
 	// TODO(josh): write tests
 }
