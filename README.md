@@ -7,7 +7,8 @@ This is not an official Google product (experimental or otherwise), it is just c
 
 ## How to get going ##
 
-1.   `git clone` this repo.
+0.   Install Go
+1.   `git clone` this repo
 2.   cd to the repo (`cd caplog`)
 3.   Run `setup.sh`
 4.   Run `build.sh`
